@@ -1,11 +1,16 @@
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import pathlib
-import urllib.parse
-import mimetypes
-import json
+
 from datetime import datetime
-import socket
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from threading import Thread, Lock
+import json
 import logging
+import mimetypes
+import pathlib
+import socket
+import urllib.parse
+
+lock = Lock()
+
 
 BASE_DIR = pathlib.Path()
 
@@ -13,7 +18,6 @@ BASE_DIR = pathlib.Path()
 def socket_client():
     host = socket.gethostname()
     port = 5000
-
     client_socket = socket.socket()
     client_socket.connect((host, port))
     message = input('--> ')
@@ -46,6 +50,7 @@ def socket_server():
         conn.send(message.encode())
     conn.close()
 
+
 class HTTPHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
@@ -64,6 +69,7 @@ class HTTPHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         route = urllib.parse.urlparse(self.path)
+        logging.debug(f'{route}')
         match route.path:
             case "/":
                 self.send_html('index.html')
@@ -111,6 +117,14 @@ def run(server=HTTPServer, handler=HTTPHandler):
         http_server.server_close()
 
 
-if __name__ == "__main__":
+def main():
+    ss = Thread(target=socket_server)
+    hs = Thread(target=run)
+    ss.start()
+    hs.start()
 
-    run()
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG, handlers=[
+        logging.FileHandler("Web_app_log.txt")], format="%(asctime)s %(message)s")
+    main()
