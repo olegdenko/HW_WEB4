@@ -9,19 +9,42 @@ import logging
 
 BASE_DIR = pathlib.Path()
 
-# html = """
-# <!DOCTYPE html>
-# <html lang="en">
-# <head>
-#     <meta charset="UTF-8">
-#     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-#     <title>OlegDenko</title>
-# </head>
-# <body>
-#     <h1> Hello World </h1>
-# </body>
-# </html>"""
 
+def socket_client():
+    host = socket.gethostname()
+    port = 5000
+
+    client_socket = socket.socket()
+    client_socket.connect((host, port))
+    message = input('--> ')
+
+    while message.lower().strip() != 'end':
+        client_socket.send(message.encode())
+        data = client_socket.recv(1024).decode()
+        print(f'received message: {data}')
+        message = input('--> ')
+
+    client_socket.close()
+
+
+def socket_server():
+    host = socket.gethostname()
+    port = 5000
+
+    server_socket = socket.socket()
+    server_socket.bind((host, port))
+    server_socket.listen(2)
+    conn, address = server_socket.accept()
+    print(f'Connection from {address}')
+    while True:
+        data = conn.recv(100).decode()
+
+        if not data:
+            break
+        print(f'received message: {data}')
+        message = input('--> ')
+        conn.send(message.encode())
+    conn.close()
 
 class HTTPHandler(BaseHTTPRequestHandler):
 
@@ -29,29 +52,11 @@ class HTTPHandler(BaseHTTPRequestHandler):
         body = self.rfile.read(int(self.headers['Content-Length']))
         body = urllib.parse.unquote(body.decode())
         body.replace('=', '')
-
-        # Отримуємо існуючі дані з файлу
-        try:
-            with open(BASE_DIR.joinpath('storage/data.json'), 'r', encoding='utf-8') as fd:
-                data = json.load(fd)
-        except FileNotFoundError:
-            data = {}
-
-        # Розпаковуємо дані з POST-запиту
-        payload_data = {key: value for key, value in [
-            el.split('=') for el in body.split('&')]}
-
-        # Додаємо запис до словника
-        payload = {
-            str(datetime.now()): payload_data
-        }
-
-        # Додаємо до існуючих даних
-        data.update(payload)
-
-        # Записуємо оновлені дані у файл
-        with open(BASE_DIR.joinpath('storage/data.json'), 'w', encoding='utf-8') as fd:
-            json.dump(data, fd, ensure_ascii=False, indent=4)
+        payload = {str(datetime.now()): {key: value for key, value in [
+            el.split('=') for el in body.split('&')]}}
+        with open(BASE_DIR.joinpath('storage/data.json'), 'a', encoding='utf-8') as fd:
+            json.dump(payload, fd, ensure_ascii=False)
+        print(payload)
 
         self.send_response(302)
         self.send_header('Location', '/contact')
@@ -91,10 +96,15 @@ class HTTPHandler(BaseHTTPRequestHandler):
         with open(filename, 'rb') as f:
             self.wfile.write(f.read())
 
+    def render_tmplate(self, filename, status=200):
+        self.send_response(status)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
 
-def run(server=HTTPServer, hamdler=HTTPHandler):
+
+def run(server=HTTPServer, handler=HTTPHandler):
     addres = ('', 3000)
-    http_server = server(addres, hamdler)
+    http_server = server(addres, handler)
     try:
         http_server.serve_forever()
     except KeyboardInterrupt:
