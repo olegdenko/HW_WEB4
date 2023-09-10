@@ -14,6 +14,11 @@ lock = Lock()
 
 
 BASE_DIR = pathlib.Path()
+STATUS_OK = 200
+STATUS_ER = 404
+STATUS_MV = 302
+BUFER1 = 100
+BUFER2 = 1024
 
 env = Environment(loader=FileSystemLoader("templates"))
 
@@ -22,17 +27,22 @@ def run_socket_server():
     host = socket.gethostname()
     port = 5000
 
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_socket.bind((host, port))
-    server_socket.listen(1)
-    conn, address = server_socket.accept()
-    logging.info(f"Connection from {address}")
+    # server_socket.listen()
+    # conn, address = server_socket.accept()
+    # logging.info(f"Connection from {address}")
     try:
         while True:
-            data = conn.recv(100).decode()
-            if not data:
+            msg, address = server_socket.recvfrom(BUFER2)
+            logging.info(f"Connection from {address}")
+            if not msg:
                 break
-        logging.info(f"received message: {data}")
+            # if msg == 'kill all':
+            #     server_stop()
+
+            save_data(msg)
+        logging.info(f"received message: {msg}")
     except KeyboardInterrupt:
         logging.info("Socket server stopped")
     finally:
@@ -42,17 +52,19 @@ def run_socket_server():
 def send_data_to_socket(body):
     host = socket.gethostname()
     port = 5000
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client_socket.connect((host, port))
-    client_socket.send(body)
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    # client_socket.connect((host, port))
+    client_socket.sendto(body, (host, port))
     client_socket.close()
 
 
 class HTTPHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        body = self.rfile.read(int(self.headers["Content-Length"]))
+        content_length = int(self.headers["Content-Length"])
+        body = self.rfile.read(content_length)
+
         send_data_to_socket(body)
-        self.send_response(302)
+        self.send_response(STATUS_MV)
         self.send_header("Location", "/contact")
         self.end_headers()
 
@@ -73,16 +85,16 @@ class HTTPHandler(BaseHTTPRequestHandler):
                 if file.exists():
                     self.send_static(file)
                 else:
-                    self.send_html("error.html", 404)
+                    self.send_html("error.html", STATUS_ER)
 
-    def send_html(self, filename, status_code=200):
+    def send_html(self, filename, status_code=STATUS_OK):
         self.send_response(status_code)
         self.send_header("Content-type", "text/html")
         self.end_headers()
         with open(filename, "rb") as f:
             self.wfile.write(f.read())
 
-    def render_template(self, filename, status_code=200):
+    def render_template(self, filename, status_code=STATUS_OK):
         self.send_response(status_code)
         self.send_header("Content-type", "text/html")
         self.end_headers()
@@ -94,7 +106,7 @@ class HTTPHandler(BaseHTTPRequestHandler):
         self.wfile.write(html.encode())
 
     def send_static(self, filename):
-        self.send_response(200)
+        self.send_response(STATUS_OK)
         mime_type, *rest = mimetypes.guess_type(filename)
         if mime_type:
             self.send_header("Content-type", mime_type)
@@ -105,7 +117,7 @@ class HTTPHandler(BaseHTTPRequestHandler):
             self.wfile.write(f.read())
 
 
-def run(server=HTTPServer, handler=HTTPHandler):
+def run_http_server(server=HTTPServer, handler=HTTPHandler):
     addres = ("", 3000)
     http_server = server(addres, handler)
     try:
@@ -117,23 +129,38 @@ def run(server=HTTPServer, handler=HTTPHandler):
 def save_data(data):
     body = urllib.parse.unquote_plus(data.decode())
     try:
-        payload = {
-            str(datetime.now()): {
-                key: value for key, value in [el.split("=") for el in body.split("&")]
-            }
-        }
-        with open(BASE_DIR.joinpath("storage/data.json"), "w", encoding="utf-8") as fd:
-            json.dump(payload, fd, ensure_ascii=False)
-    except ValueError as err:
-        logging.error(f"Filed parse data: {body} with error {err}")
-    except OSError as err:
-        logging.error(f"Filed write data: {body} with error {err}")
+        with open(BASE_DIR.joinpath("storage/data.json"), "r", encoding="utf-8") as fd:
+            data = json.load(fd)
+    except FileNotFoundError:
+        data = {}
+    payload_data = {
+        key: value for key, value in [el.split("=") for el in body.split("&")]
+    }
+
+    timestamp = str(datetime.now())
+    data[timestamp] = payload_data
+
+    with open(BASE_DIR.joinpath("storage/data.json"), "w", encoding="utf-8") as fd:
+        json.dump(data, fd, ensure_ascii=False, indent=4)
+
+    # try:
+    #     payload = {
+    #         str(datetime.now()): {
+    #             key: value for key, value in [el.split("=") for el in body.split("&")]
+    #         }
+    #     }
+    #     with open(BASE_DIR.joinpath("storage/data.json"), "w", encoding="utf-8") as fd:
+    #         json.dump(payload, fd, ensure_ascii=False)
+    # except ValueError as err:
+    #     logging.error(f"Filed parse data: {body} with error {err}")
+    # except OSError as err:
+    #     logging.error(f"Filed write data: {body} with error {err}")
 
 
 def main():
     ss = Thread(target=run_socket_server)
-    hs = Thread(target=run)
     ss.start()
+    hs = Thread(target=run_http_server)
     hs.start()
 
 
