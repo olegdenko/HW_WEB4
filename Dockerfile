@@ -11,6 +11,9 @@ WORKDIR $APP_HOME
 # Скопіюємо інші файли в робочу директорію контейнера
 COPY . .
 
+# Налаштування volume-перенаправлення
+VOLUME /app/storage
+
 # Встановимо залежності всередині контейнера
 RUN pip install -r requirements.txt
 
