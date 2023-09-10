@@ -2,18 +2,25 @@ from jinja2 import Environment, FileSystemLoader
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Thread, Lock
+import threading
 import json
 import logging
 import mimetypes
 import pathlib
 import socket
+import signal
 import urllib.parse
 
 
 lock = Lock()
+stop_event = threading.Event()
 
 
 BASE_DIR = pathlib.Path()
+HOST = socket.gethostname()
+HOST_OUT = "0.0.0.0"
+HTTP_SRV_PORT = 3000
+SOCKET_SRV_PORT = 5000
 STATUS_OK = 200
 STATUS_ER = 404
 STATUS_MV = 302
@@ -21,26 +28,18 @@ BUFER1 = 100
 BUFER2 = 1024
 
 env = Environment(loader=FileSystemLoader("templates"))
+stop_threads = False
 
 
 def run_socket_server():
-    host = socket.gethostname()
-    port = 5000
-
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind((host, port))
-    # server_socket.listen()
-    # conn, address = server_socket.accept()
-    # logging.info(f"Connection from {address}")
+    server_socket.bind((HOST, SOCKET_SRV_PORT))
     try:
-        while True:
+        while not stop_event.is_set():
             msg, address = server_socket.recvfrom(BUFER2)
             logging.info(f"Connection from {address}")
             if not msg:
                 break
-            # if msg == 'kill all':
-            #     server_stop()
-
             save_data(msg)
         logging.info(f"received message: {msg}")
     except KeyboardInterrupt:
@@ -50,19 +49,22 @@ def run_socket_server():
 
 
 def send_data_to_socket(body):
-    host = socket.gethostname()
-    port = 5000
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    # client_socket.connect((host, port))
-    client_socket.sendto(body, (host, port))
+    client_socket.sendto(body, (HOST, SOCKET_SRV_PORT))
     client_socket.close()
 
 
 class HTTPHandler(BaseHTTPRequestHandler):
     def do_POST(self):
+        global stop_threads
         content_length = int(self.headers["Content-Length"])
         body = self.rfile.read(content_length)
 
+        body_str = body.decode()
+
+        if "killall" in body_str:
+            stop_event.set()
+            print("killall")
         send_data_to_socket(body)
         self.send_response(STATUS_MV)
         self.send_header("Location", "/contact")
@@ -118,7 +120,7 @@ class HTTPHandler(BaseHTTPRequestHandler):
 
 
 def run_http_server(server=HTTPServer, handler=HTTPHandler):
-    addres = ("", 3000)
+    addres = (HOST_OUT, HTTP_SRV_PORT)
     http_server = server(addres, handler)
     try:
         http_server.serve_forever()
@@ -136,25 +138,11 @@ def save_data(data):
     payload_data = {
         key: value for key, value in [el.split("=") for el in body.split("&")]
     }
-
     timestamp = str(datetime.now())
     data[timestamp] = payload_data
 
     with open(BASE_DIR.joinpath("storage/data.json"), "w", encoding="utf-8") as fd:
         json.dump(data, fd, ensure_ascii=False, indent=4)
-
-    # try:
-    #     payload = {
-    #         str(datetime.now()): {
-    #             key: value for key, value in [el.split("=") for el in body.split("&")]
-    #         }
-    #     }
-    #     with open(BASE_DIR.joinpath("storage/data.json"), "w", encoding="utf-8") as fd:
-    #         json.dump(payload, fd, ensure_ascii=False)
-    # except ValueError as err:
-    #     logging.error(f"Filed parse data: {body} with error {err}")
-    # except OSError as err:
-    #     logging.error(f"Filed write data: {body} with error {err}")
 
 
 def main():
@@ -163,11 +151,23 @@ def main():
     hs = Thread(target=run_http_server)
     hs.start()
 
+    stop_event.wait()
+
+    ss.join()
+    hs.join()
+
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     logging.basicConfig(
         level=logging.DEBUG,
         handlers=[logging.FileHandler("Web_app_log.txt")],
         format="%(asctime)s %(threadName)s %(message)s",
     )
+    STORAGE_DIR = pathlib.Path().joinpath("storage")
+    FILE_STORAGE = STORAGE_DIR / "data.json"
+    if not FILE_STORAGE.exists():
+        with open(FILE_STORAGE, "w", encoding="utf-8") as fd:
+            json.dump({}, fd, ensure_ascii=False)
+
     main()
